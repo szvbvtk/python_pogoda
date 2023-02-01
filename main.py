@@ -1,5 +1,5 @@
 import numpy as np
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout, QLineEdit, QPushButton, QLabel, QDialog, QMessageBox, QFileDialog
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout, QLineEdit, QPushButton, QLabel, QDialog, QMessageBox, QFileDialog, QVBoxLayout
 from PyQt6 import QtCore
 from PyQt6.QtGui import QIcon
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 import requests
 from scipy.interpolate import CubicSpline
 from math import floor, ceil
+import ctypes
+import datetime as dt
+
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('appid56456546')
 
 
 class MainWindow(QMainWindow):
@@ -20,29 +24,44 @@ class MainWindow(QMainWindow):
         search_button.clicked.connect(self.draw_plot)
         save_button = QPushButton("Zapisz")
         save_button.clicked.connect(self.save_fig)
-
-        search_button.setStyleSheet("background-color : #018723; color:black")
+        self.setStyleSheet("background-color : white;")
+        search_button.setStyleSheet("background-color : lightcyan; color:black")
         self.search_line = QLineEdit()
 
         self.figure = plt.figure(figsize=(16, 12), dpi=80)
         self.canvas = FigureCanvasQTAgg(self.figure)
         # self.figure.tight_layout()
 
-        layout.addWidget(self.search_line, 0, 0, 1, 1)
-        layout.addWidget(search_button, 0, 2, 1, 2)
-        layout.addWidget(save_button, 0, 4, 1, 1)
-        layout.addWidget(self.canvas, 1, 0, 1, 5)
+        self.infoBox = QWidget()
+        infoBoxLayout = QVBoxLayout()
+        self.mean_temp = QLabel()
+        self.mean_wind_chill = QLabel()
+        self.sunrise = QLabel()
+        self.sunset = QLabel()
+
+        infoBoxLayout.addWidget(self.mean_temp)
+        infoBoxLayout.addWidget(self.mean_wind_chill)
+        infoBoxLayout.addWidget(self.sunrise)
+        infoBoxLayout.addWidget(self.sunset)
+        self.infoBox.setLayout(infoBoxLayout)
+
+        layout.addWidget(self.search_line, 0, 0, 1, 6)
+        layout.addWidget(search_button, 0, 6, 1, 2)
+        layout.addWidget(save_button, 0, 8, 1, 2)
+        layout.addWidget(self.canvas, 1, 0, 10, 8)
+        layout.addWidget(self.infoBox, 1, 8, 1, 1)
 
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
+
         self.setWindowIcon(QIcon("icon.png"))
         self.showMaximized()
 
     def draw_plot(self):
         self.figure.clear()
         try:
-            xdata, xlabels, temperature, wind_chill = self.getData()
+            xdata, xlabels, temperature, wind_chill, sunrise, sunset = self.getData()
         except:
 
 
@@ -51,6 +70,14 @@ class MainWindow(QMainWindow):
             if dial.exec() == QMessageBox.accepted:
                 self.search_line.clear()
             return
+
+        sunrise = dt.datetime.fromtimestamp(sunrise).strftime('%H:%M:%S')
+        sunset = dt.datetime.fromtimestamp(sunset).strftime('%H:%M:%S')
+
+        self.sunrise.setText(f"Wschód słońca: {sunrise}")
+        self.sunrise.adjustSize()
+        self.sunset.setText(f"Zachód słońca: {sunset}")
+        self.sunset.adjustSize()
 
         temperature_interp_func = CubicSpline(xdata, temperature)
         wind_chill_interp_func = CubicSpline(xdata, wind_chill)
@@ -67,8 +94,18 @@ class MainWindow(QMainWindow):
 
         yticks = self.temperatureRange(temperature_interpolated, wind_chill_interpolated)
         print(yticks)
+
+        _mean_temp = np.mean(temperature_interpolated).round(2)
+        _mean_wind_chill = np.mean(wind_chill_interpolated).round(2)
+        self.mean_temp.setText(f"Średnia temperatura: {_mean_temp}")
+        self.mean_wind_chill.setText(f"Średnia odczuwalna temperatura: {_mean_wind_chill}")
+        self.mean_temp.adjustSize()
+        self.mean_wind_chill.adjustSize()
+
         ax = self.figure.add_subplot(111)
-        ax.set_title(f"Pogoda w miejscowości {self.search_line.text():}")
+        self.figure.patch.set_facecolor('paleturquoise')
+        ax.set_title(f"Pogoda w miejscowości {self.search_line.text():}", fontsize=20)
+        ax.set_facecolor("lightcyan")
         ax.plot(x, wind_chill_interpolated, label="Temperatura odczuwalna")
         ax.plot(x, temperature_interpolated, label="temperatura interpolowana")
 
@@ -101,7 +138,11 @@ class MainWindow(QMainWindow):
         self.figure.savefig(f"{name[0]}")
 
     def getData(self):
-        api_key = "8864222db203617b56fad931687f7175"
+        with open("api_key.txt", 'r') as key:
+            api_key = key.read().strip()
+            print(api_key)
+
+        print(f"http://api.openweathermap.org/geo/1.0/direct?q={self.search_line.text()}&limit=5&appid={api_key}")
         city_loc = requests.get(f"http://api.openweathermap.org/geo/1.0/direct?q={self.search_line.text()}&limit=5&appid={api_key}")
 
         if city_loc.status_code != 200:
@@ -117,24 +158,47 @@ class MainWindow(QMainWindow):
         latitude = round(city_loc[0]['lat'], 2)
         longitude = round(city_loc[0]['lon'], 2)
         weather_data = requests.get(f"http://api.openweathermap.org/data/2.5/forecast?lat={latitude}&lon={longitude}&appid={api_key}")
+        print(f"http://api.openweathermap.org/data/2.5/forecast?lat={latitude}&lon={longitude}&appid={api_key}")
 
         if weather_data.status_code != 200:
             return None
 
-        weather_data = weather_data.json()['list']
+        weather_data = weather_data.json()
 
-        temperature = []
-        wind_chill = []
-        _datetime = []
+        sunrise = weather_data['city']['sunrise']
+        sunset = weather_data['city']['sunset']
+
+        weather_data = weather_data['list']
+
+
+        # temperature = []
+        # wind_chill = []
+        # datetime = []
+        # date_labels = []
+        # for d in weather_data:
+        #     datetime.append(d['dt'])
+        #     date_labels.append(d['dt_txt'])
+        #     temperature.append(round(self.kelvinToCelcius(d['main']['temp']), 2))
+        #     wind_chill.append(round(self.kelvinToCelcius(d['main']['feels_like']), 2))
+
+        temperature = np.empty(40)
+        wind_chill = np.empty(40)
+        datetime = np.empty(40)
         date_labels = []
-        for d in weather_data:
-            _datetime.append(d['dt'])
-            date_labels.append(d['dt_txt'])
-            temperature.append(round(self.kelvinToCelcius(d['main']['temp']), 2))
-            wind_chill.append(round(self.kelvinToCelcius(d['main']['feels_like']), 2))
+
+        i = 0
+        for wd in weather_data:
+            datetime[i] = wd['dt']
+            date_labels.append(wd['dt_txt'])
+            temperature[i] = round(self.kelvinToCelcius(wd['main']['temp']), 2)
+            wind_chill[i] = round(self.kelvinToCelcius(wd['main']['feels_like']), 2)
+            i += 1
+
+        print(temperature)
 
         # print(weather_data)
-        return _datetime, date_labels, temperature, wind_chill
+        print(len(temperature))
+        return datetime, date_labels, temperature, wind_chill, sunrise, sunset
 
     @staticmethod
     def kelvinToCelcius(k):
