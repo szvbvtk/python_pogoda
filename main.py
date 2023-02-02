@@ -1,11 +1,11 @@
 import numpy as np
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout, QLineEdit, QPushButton, QLabel, QDialog, QMessageBox, QFileDialog, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout, QLineEdit, QPushButton, QLabel, QDialog, QMessageBox, QFileDialog, QVBoxLayout, QFrame
 from PyQt6 import QtCore
 from PyQt6.QtGui import QIcon
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 import matplotlib.pyplot as plt
 import requests
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, interp1d
 from math import floor, ceil
 import ctypes
 import datetime as dt
@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
     def draw_plot(self):
         self.figure.clear()
         try:
-            xdata, xlabels, temperature, wind_chill, sunrise, sunset = self.getData()
+            xdata, xlabels, temperature, wind_chill, sunrise, sunset, wind = self.getData()
         except:
 
 
@@ -79,11 +79,17 @@ class MainWindow(QMainWindow):
         self.sunset.setText(f"Zachód słońca: {sunset}")
         self.sunset.adjustSize()
 
+        temperature = self.kelvinToCelcius(temperature)
+        wind_chill = self.kelvinToCelcius(wind_chill)
+        wind = self.mps_to_mph(wind)
+
         temperature_interp_func = CubicSpline(xdata, temperature)
         wind_chill_interp_func = CubicSpline(xdata, wind_chill)
+        wind_interp_func = interp1d(xdata, wind)
         x = np.linspace(xdata[0], xdata[-1], 200)
         temperature_interpolated = temperature_interp_func(x)
         wind_chill_interpolated = wind_chill_interp_func(x)
+        wind_interpolated = wind_interp_func(x)
 
         for i in range(len(xlabels)):
             xlabels[i] = xlabels[i][5:-3]
@@ -92,7 +98,7 @@ class MainWindow(QMainWindow):
             tmp = '-'.join(tmp[::-1])
             xlabels[i] = xlabels[i].replace(xlabels[i][0:5], tmp)
 
-        yticks = self.temperatureRange(temperature_interpolated, wind_chill_interpolated)
+        yticks = self.temperatureRange(temperature_interpolated, wind_chill_interpolated, wind)
         print(yticks)
 
         _mean_temp = np.mean(temperature_interpolated).round(2)
@@ -103,11 +109,13 @@ class MainWindow(QMainWindow):
         self.mean_wind_chill.adjustSize()
 
         ax = self.figure.add_subplot(111)
+
         self.figure.patch.set_facecolor('paleturquoise')
         ax.set_title(f"Pogoda w miejscowości {self.search_line.text():}", fontsize=20)
         ax.set_facecolor("lightcyan")
-        ax.plot(x, wind_chill_interpolated, label="Temperatura odczuwalna")
-        ax.plot(x, temperature_interpolated, label="temperatura interpolowana")
+        ax.plot(x, wind_chill_interpolated, label=f"Temperatura odczuwalna ($^\circ$C)")
+        ax.plot(x, temperature_interpolated, label=f"temperatura interpolowana ($^\circ$C)")
+        ax.plot(x, wind_interpolated, label="Wiatr (mph)")
 
         ax.set_xticks(xdata, xlabels, rotation=45)
         ax.set_ylim(np.min(yticks), np.max(yticks))
@@ -120,18 +128,28 @@ class MainWindow(QMainWindow):
         self.search_line.clear()
 
     @staticmethod
-    def temperatureRange(temperature, wind_chill):
+    def temperatureRange(temperature, wind_chill, wind):
         _min = min(temperature)
         _max = max(temperature)
 
         if min(wind_chill) < _min:
             _min = min(wind_chill)
 
+        if min(wind) < _min:
+            _min = min(wind)
+
         if max(wind_chill) > _max:
             _max = max(wind_chill)
 
+        if max(wind) > _max:
+            _max = max(wind)
+
         return np.arange(floor(_min) - 0.5, ceil(_max) + 1.5, 0.5)
 
+    def process_data(self):
+        xdata, xlabels, temperature, wind_chill, sunrise, sunset, wind = self.getData()
+
+        return xdata, xlabels, temperature, wind_chill, sunrise, sunset, wind
 
     def save_fig(self):
         name = QFileDialog.getSaveFileName(self, 'Save File', filter="Image files (*.png)")
@@ -170,42 +188,47 @@ class MainWindow(QMainWindow):
 
         weather_data = weather_data['list']
 
-
-        # temperature = []
-        # wind_chill = []
-        # datetime = []
-        # date_labels = []
-        # for d in weather_data:
-        #     datetime.append(d['dt'])
-        #     date_labels.append(d['dt_txt'])
-        #     temperature.append(round(self.kelvinToCelcius(d['main']['temp']), 2))
-        #     wind_chill.append(round(self.kelvinToCelcius(d['main']['feels_like']), 2))
-
         temperature = np.empty(40)
         wind_chill = np.empty(40)
         datetime = np.empty(40)
+        wind = np.empty(40)
         date_labels = []
 
         i = 0
         for wd in weather_data:
             datetime[i] = wd['dt']
             date_labels.append(wd['dt_txt'])
-            temperature[i] = round(self.kelvinToCelcius(wd['main']['temp']), 2)
-            wind_chill[i] = round(self.kelvinToCelcius(wd['main']['feels_like']), 2)
+            temperature[i] = wd['main']['temp']
+            wind_chill[i] = wd['main']['feels_like']
+            wind[i] = wd['wind']['speed']
             i += 1
 
         print(temperature)
 
         # print(weather_data)
         print(len(temperature))
-        return datetime, date_labels, temperature, wind_chill, sunrise, sunset
+        return datetime, date_labels, temperature, wind_chill, sunrise, sunset, wind
 
     @staticmethod
     def kelvinToCelcius(k):
+        """
+        Zamiana na stopnie Celcjusza
+        """
         return k - 273.15
+
+    @staticmethod
+    def mps_to_mph(mps):
+        """
+        Zamiana na mile na godzine
+        """
+        return mps * 2.23693381
+
 
 
 class ErrorDialog(QDialog):
+    """
+    Informacja o błędzie wyskakująca po wpisaniu nieprawidłowej nazwy miejscowości
+    """
     def __init__(self):
         super().__init__()
         layout = QGridLayout()
